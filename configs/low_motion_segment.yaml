@@ -1,0 +1,30 @@
+# Example config for low-motion clips: lower the segmentation motion threshold so
+# gentle hand-object interaction bursts are still split out as interaction
+# segments (the global default 1.5 is too high when a clip's motion energy is low,
+# e.g. median ~0.5). Tune motion_threshold to ~the 60-70th percentile of the
+# clip's per-frame motion energy.
+
+pipeline: [ingest, trajectory, hands, segment, qc, augment]
+
+stages:
+  ingest:
+    enabled: true
+    params: { stride: 1, max_frames: 0, hfov_deg: 70.0 }
+  trajectory:
+    enabled: true
+    params: { depth_model: "depth-anything/Depth-Anything-V2-Small-hf", orb_features: 1500, scale_from_depth: true }
+  hands:
+    enabled: true
+    params: { max_hands: 2, smooth_window: 5, smooth_poly: 3, depth_anchor: wrist }
+  segment:
+    enabled: true
+    params:
+      backend: heuristic
+      motion_threshold: 0.7    # lower than the 1.5 default; ~p70 of clip motion energy
+      min_segment_frames: 10   # ~0.33s at 30fps
+  qc:
+    enabled: true
+    params: { velocity_sigma: 3.0, reproj_px: 5.0 }
+  augment:
+    enabled: false
+    params: { background: null, inpaint_hands: false }

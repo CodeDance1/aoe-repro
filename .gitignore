@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Project outputs / large assets
+output/
+datasets/
+*.ckpt
+*.pth
+
+# Models cache (HF)
+.cache/
+
+# Bundled sample data is tracked explicitly; ignore other media
+data/*.mp4
+!data/sample_clip.mp4
+# Explicit privacy guard: never commit the real recorded clip
+
+# OS
+.DS_Store

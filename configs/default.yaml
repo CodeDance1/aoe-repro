@@ -1,0 +1,50 @@
+# Default AoE pipeline configuration.
+# Stages run in the listed order. A stage with `enabled: false` is recorded as
+# skipped. The execution DAG is: ingest -> trajectory -> hands -> segment -> qc,
+# with augment optional (off by default).
+
+pipeline: [ingest, trajectory, hands, segment, qc, augment]
+
+stages:
+  ingest:
+    enabled: true
+    params:
+      stride: 1            # keep every Nth frame
+      max_frames: 0        # 0 = all frames
+      hfov_deg: 70.0       # horizontal FOV for the pinhole fallback
+      # checkerboard_dir: path/to/calib_images   # optional OpenCV calibration
+
+  trajectory:
+    enabled: true
+    params:
+      depth_model: "depth-anything/Depth-Anything-V2-Small-hf"
+      orb_features: 1500
+      scale_from_depth: true   # rescale monocular translation using median depth
+
+  hands:
+    enabled: true
+    params:
+      max_hands: 2
+      smooth_window: 5     # Savitzky-Golay window (odd); larger = smoother but more lag
+      smooth_poly: 3
+      depth_anchor: wrist  # wrist | per_joint  (wrist = near-planar-hand, less jitter)
+
+  segment:
+    enabled: true
+    params:
+      backend: heuristic   # heuristic | vlm
+      motion_threshold: 1.5
+      min_segment_frames: 8
+      # vlm: { provider: anthropic, model: claude-opus-4-8 }   # when backend=vlm
+
+  qc:
+    enabled: true
+    params:
+      velocity_sigma: 3.0  # flag per-joint velocity z-score > this
+      reproj_px: 5.0       # flag reprojection error > this (pixels)
+
+  augment:
+    enabled: false
+    params:
+      background: null     # path to a replacement background image
+      inpaint_hands: false
