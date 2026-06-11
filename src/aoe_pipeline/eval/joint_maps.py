@@ -39,6 +39,11 @@ MEDIAPIPE_TO_MANO = [
 ]
 
 
+# Inverse permutation: MANO-21 slot for each MediaPipe index (computed, not
+# hand-derived, so the two maps can never drift apart).
+MANO_TO_MEDIAPIPE: list[int] = np.argsort(MEDIAPIPE_TO_MANO).tolist()
+
+
 def remap(joints: np.ndarray, order: list[int]) -> np.ndarray:
     """Reorder joints along the joint axis (second-to-last). ``joints``: (..., J, D)."""
     return np.asarray(joints)[..., order, :]
@@ -46,3 +51,8 @@ def remap(joints: np.ndarray, order: list[int]) -> np.ndarray:
 
 def to_mano(joints_mediapipe: np.ndarray) -> np.ndarray:
     return remap(joints_mediapipe, MEDIAPIPE_TO_MANO)
+
+
+def from_mano(joints_mano: np.ndarray) -> np.ndarray:
+    """MANO-21 order -> MediaPipe-21 order (the repo's storage convention)."""
+    return remap(joints_mano, MANO_TO_MEDIAPIPE)

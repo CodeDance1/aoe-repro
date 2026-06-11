@@ -8,11 +8,13 @@ A processed clip lives in ``output/<clip_id>/`` with:
     trajectory.tum         # camera poses, TUM format (consumable by `evo`)
     hands/joints_world.npy # (T, H, 21, 3) world-coordinate 3D joints
     hands/joints_2d.npy    # (T, H, 21, 2) image-pixel 2D joints
+    hands/mano.npz         # faithful profile: MANO params (see MANOSequence)
     segments.json          # atomic-action segments
     qc_report.json         # quality-control flags
     viz/                   # optional overlays / plots
 
 where T = #frames and H = #hands tracked (padded with NaN when absent).
+Joint storage convention is MediaPipe-21 order (see eval/joint_maps.py).
 """
 
 from __future__ import annotations
@@ -57,6 +59,38 @@ class CameraIntrinsics:
     @classmethod
     def from_dict(cls, d: dict) -> "CameraIntrinsics":
         return cls(**d)
+
+
+@dataclass
+class MANOSequence:
+    """Per-clip MANO parameters from a faithful hand stage (e.g. HaWoR).
+
+    Hand-slot axis matches the rest of the repo: 0 = Left, 1 = Right.
+    Saved as ``hands/mano.npz``. Frames where a hand is absent have
+    ``valid=False`` (param rows are zeros there).
+    """
+
+    trans: np.ndarray         # (2, T, 3)   world translation
+    global_orient: np.ndarray  # (2, T, 3, 3) world rotation matrices
+    hand_pose: np.ndarray     # (2, T, 45)  articulation (15 joints x 3, axis-angle)
+    betas: np.ndarray         # (2, T, 10)  shape
+    valid: np.ndarray         # (2, T)      bool
+
+    @property
+    def num_frames(self) -> int:
+        return int(self.trans.shape[1])
+
+    def save(self, path: str | Path) -> None:
+        np.savez_compressed(
+            path, trans=self.trans, global_orient=self.global_orient,
+            hand_pose=self.hand_pose, betas=self.betas, valid=self.valid,
+        )
+
+    @classmethod
+    def load(cls, path: str | Path) -> "MANOSequence":
+        d = np.load(path)
+        return cls(trans=d["trans"], global_orient=d["global_orient"],
+                   hand_pose=d["hand_pose"], betas=d["betas"], valid=d["valid"])
 
 
 @dataclass

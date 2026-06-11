@@ -1,0 +1,44 @@
+# Faithful profile (F1): the AoE paper's real hand model — HaWoR + MANO.
+#
+# `hands_hawor` is end-to-end (video -> world-space MANO hands + METRIC camera via
+# masked DROID-SLAM + Metric3D + infiller), so it REPLACES the lite `trajectory`
+# and `hands` stages. Requires a CUDA box with the HaWoR env set up (envs/hawor.sh)
+# and the license-gated MANO models; otherwise the stage records `skipped`.
+#
+#   aoe-pipeline run --config configs/faithful.yaml --video <clip.mp4> --output-dir output
+
+pipeline: [ingest, hands_hawor, segment, label, qc, augment]
+
+stages:
+  ingest:
+    enabled: true
+    params: { stride: 1, max_frames: 0, hfov_deg: 70.0 }
+
+  hands_hawor:
+    enabled: true
+    params:
+      hawor_dir: third_party/HaWoR     # set to your HaWoR checkout (envs/hawor.sh)
+      conda_env: hawor
+      mano_dir: third_party/HaWoR/_DATA/data/mano
+      # img_focal: 914.0               # optional; HaWoR estimates focal if omitted
+      # export_script: scripts/hawor_export.py
+
+  segment:
+    enabled: true
+    params:
+      backend: heuristic     # F0 (later): backend: vlm + provider qwen
+      motion_threshold: auto
+      motion_percentile: 65
+      min_segment_frames: 8
+
+  label:
+    enabled: true
+    params: { provider: openai, num_keyframes: 3, verify: 2 }
+
+  qc:
+    enabled: true
+    params: { velocity_sigma: 3.0, reproj_px: 5.0 }
+
+  augment:
+    enabled: false
+    params: { background: null, inpaint_hands: false }

@@ -1,5 +1,7 @@
 # AoE-Repro — Mac-runnable reproduction of the AoE cloud labeling pipeline
 
+[![CI](https://github.com/CodeDance1/aoe-repro/actions/workflows/ci.yml/badge.svg)](https://github.com/CodeDance1/aoe-repro/actions/workflows/ci.yml)
+
 A faithful, **Apple-Silicon-runnable** re-implementation of the six-stage cloud
 labeling pipeline from *AoE: Always-on Egocentric Human Video Collection for
 Embodied AI* ([arXiv 2602.23893](https://arxiv.org/abs/2602.23893)). It turns a
@@ -147,6 +149,34 @@ python scripts/label_segments_vlm.py --clip-dir output/<clip> --dry-run   # no A
 ```
 
 The next `aoe-pipeline run` (or `--only label`) then merges that file.
+
+## Faithful profile (paper-exact models, GPU)
+
+`configs/faithful.yaml` swaps the lite substitutes for the AoE paper's real models
+via the stage registry — starting with **HaWoR + MANO** for hands
+(`hands_hawor`). HaWoR is end-to-end (video → world-space **MANO** hands + a
+**metric** camera via masked DROID-SLAM + Metric3D + an infiller), so this one
+stage supersedes both the lite `trajectory` and `hands` stages and resolves the
+up-to-scale limitation.
+
+```bash
+# one-time, on a CUDA box (clones HaWoR, builds its own conda env, lists ckpts):
+bash envs/hawor.sh third_party/HaWoR
+# + register at https://mano.is.tue.mpg.de/ and place MANO_LEFT/RIGHT.pkl (license-gated)
+
+# pre-flight: checks GPU/CUDA, checkpoints, MANO, conda env, HaWoR imports (step 0)
+python scripts/check_hawor_env.py --hawor-dir third_party/HaWoR --check-imports
+
+aoe-pipeline run --config configs/faithful.yaml --video <clip.mp4> --output-dir output
+```
+
+Heavy models run **in their own conda env via subprocess**
+(`stages/adapter.py::SubprocessStage` → `scripts/hawor_export.py`), since HaWoR
+needs py3.10/torch1.13/cu117 vs the base env. Outputs land in the same schema
+(`hands/joints_world.npy` in MediaPipe-21 order, plus `hands/mano.npz` with MANO
+θ/β/orient/transl and a **metric** `trajectory.tum`), so all viz/eval/QC tooling
+works unchanged. Without the HaWoR env/checkpoints the stage records `skipped` —
+the lite profile and CI stay green on machines without CUDA.
 
 ## Tests
 
