@@ -7,8 +7,11 @@ import inspect
 import aoe_pipeline.cli as climod
 
 
-def test_run_has_viz_segments_option():
-    assert "viz_segments" in inspect.signature(climod.run).parameters
+def test_run_has_viz_segments_option_default_on():
+    params = inspect.signature(climod.run).parameters
+    assert "viz_segments" in params
+    # typer.Option(...) wraps the default; visualization is on by default
+    assert params["viz_segments"].default.default is True
 
 
 def test_run_segment_viz_invokes_script_with_gif(monkeypatch, tmp_path):

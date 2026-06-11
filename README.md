@@ -58,8 +58,8 @@ aoe-pipeline run --video data/sample_clip.mp4 --output-dir output --verbose
 curl -sL -o datasets/hand.jpg \
   https://storage.googleapis.com/mediapipe-tasks/hand_landmarker/woman_hands.jpg
 python scripts/make_hand_clip.py --image datasets/hand.jpg --out datasets/hand_clip.mp4
-# --viz-segments also renders segment timeline / contact-sheet / annotated GIF + cut clips
-aoe-pipeline run --video datasets/hand_clip.mp4 --output-dir output --viz-segments --verbose
+# segment viz (timeline / contact-sheet / annotated GIF + cut clips) is rendered by default
+aoe-pipeline run --video datasets/hand_clip.mp4 --output-dir output --verbose
 
 aoe-pipeline list-stages
 ```
@@ -111,8 +111,8 @@ For ground truth, **EgoDex** (Apple) is the lowest-friction benchmark — it shi
 # segment timeline / contact sheet / annotated video (+ GIF) + cut interaction clips
 python scripts/visualize_segments.py --clip-dir output/<clip> --source <video>.mp4 --gif
 
-# ...or fold it into the main run: render segment viz + GIF right after the pipeline
-aoe-pipeline run --video <video>.mp4 --output-dir output --viz-segments
+# the main run renders these by default right after the pipeline (--no-viz-segments to skip)
+aoe-pipeline run --video <video>.mp4 --output-dir output
 
 # HaWoR-style Front|Top|Side orthographic animation of the 3D hands
 python scripts/render_hand_views.py --clip-dir output/<clip> --frame both

@@ -46,9 +46,9 @@ def run(
     clip_id: str = typer.Option(None, help="Clip id (default: video filename stem)"),
     only: str = typer.Option(None, help="Comma-separated subset of stages to run"),
     viz_segments: bool = typer.Option(
-        False, "--viz-segments",
-        help="After the run, render segment visualizations (timeline/contact-sheet/annotated"
-             " video + GIF) and cut interaction sub-clips via scripts/visualize_segments.py",
+        True, "--viz-segments/--no-viz-segments",
+        help="Render segment visualizations (timeline/contact-sheet/annotated video + GIF)"
+             " and cut interaction sub-clips after the run. On by default; --no-viz-segments to skip",
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
