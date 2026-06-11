@@ -1,9 +1,9 @@
 """Stage 2 — atomic action segmentation.
 
-Substitute for Qwen3-VL-235B. Default backend is a no-model heuristic: combine
-optical-flow motion energy with hand presence to find hand-object interaction
-windows, then split long windows at motion valleys into atomic clips. A pluggable
-VLM backend (``backend: vlm``) can label/segment via a hosted model instead.
+Substitute for Qwen3-VL-235B. The paper-faithful path samples an adaptive count
+of keyframes, calls a local/hosted VLM, and stores Figure-3-style
+``atomic_actions``. The fallback heuristic combines optical-flow motion energy
+with hand presence when available.
 """
 
 from __future__ import annotations
@@ -26,15 +26,16 @@ class SegmentStage(Stage):
         frames = ctx.get_frames()
         backend = self.params.get("backend", "heuristic")
         if backend == "vlm":
-            segments = self._segment_vlm(ctx, frames)
+            segments, info = self._segment_vlm(ctx, frames)
         else:
             segments = self._segment_heuristic(ctx, frames)
+            info = {}
 
         (ctx.clip_dir / "segments.json").write_text(json.dumps(segments, indent=2))
         ctx.blackboard["segments"] = segments
         n_inter = sum(1 for s in segments if s["label"].startswith("interaction"))
         ctx.manifest.set_stage(self.name, "ok", backend=backend,
-                               num_segments=len(segments), num_interaction=n_inter)
+                               num_segments=len(segments), num_interaction=n_inter, **info)
         log.info("segment: %d segments (%d interaction) via %s", len(segments), n_inter, backend)
 
     # --- heuristic backend -----------------------------------------------------
@@ -72,11 +73,30 @@ class SegmentStage(Stage):
     def _segment_vlm(self, ctx: ClipContext, frames) -> list[dict]:
         cfg = self.params.get("vlm", {}) or {}
         provider = cfg.get("provider", "anthropic")
+        call_cfg = {k: v for k, v in cfg.items() if k != "provider"}
         try:
             from ..vlm import segment_with_vlm
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(f"VLM backend unavailable: {exc}") from exc
-        return segment_with_vlm(frames, ctx.fps, provider=provider, **cfg)
+        segments, meta = segment_with_vlm(
+            frames, ctx.fps, provider=provider, return_metadata=True, **call_cfg
+        )
+        cloud_selection = {
+            k: v for k, v in meta.items()
+            if k not in {"atomic_actions"}
+        }
+        (ctx.clip_dir / "cloud_selection.json").write_text(json.dumps(cloud_selection, indent=2))
+        (ctx.clip_dir / "atomic_actions.json").write_text(
+            json.dumps(meta.get("atomic_actions", []), indent=2)
+        )
+        ctx.blackboard["atomic_actions"] = meta.get("atomic_actions", [])
+        return segments, {
+            "provider": meta.get("provider"),
+            "model": meta.get("model"),
+            "keyframe_strategy": meta.get("keyframe_strategy"),
+            "keyframe_count": meta.get("keyframe_count"),
+            "prompt_version": meta.get("prompt_version"),
+        }
 
 
 # --- helpers -------------------------------------------------------------------

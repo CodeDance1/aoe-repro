@@ -35,7 +35,7 @@ class PipelineConfig(BaseModel):
     def default(cls) -> "PipelineConfig":
         """Built-in default identical to configs/default.yaml."""
         return cls(
-            pipeline=["ingest", "trajectory", "hands", "segment", "qc", "augment"],
+            pipeline=["ingest", "segment", "trajectory", "hands", "qc", "augment"],
             stages={
                 "ingest": StageCfg(params={"stride": 1, "max_frames": 0, "hfov_deg": 70.0}),
                 "trajectory": StageCfg(
@@ -54,6 +54,13 @@ class PipelineConfig(BaseModel):
                         "backend": "heuristic",
                         "motion_threshold": 1.5,
                         "min_segment_frames": 8,
+                        "vlm": {
+                            "provider": "local_openai",
+                            "keyframe_strategy": "adaptive",
+                            "min_keyframes": 8,
+                            "max_keyframes": 32,
+                            "seconds_per_keyframe": 2.0,
+                        },
                     }
                 ),
                 "qc": StageCfg(params={"velocity_sigma": 3.0, "reproj_px": 5.0}),

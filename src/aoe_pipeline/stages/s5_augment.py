@@ -10,11 +10,12 @@ Writes augmented frames to ``augment/`` and leaves the labels untouched.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
+import shutil
 
 import cv2
 import numpy as np
 
+from ..external import ExternalPipelineError, run_external
 from .base import ClipContext, Stage
 from .registry import register
 
@@ -24,6 +25,10 @@ log = logging.getLogger("aoe")
 @register("augment")
 class AugmentStage(Stage):
     def run(self, ctx: ClipContext) -> None:
+        if self.params.get("backend", "substitute") == "original":
+            self._run_original(ctx)
+            return
+
         frames = ctx.get_frames()
         bg_path = self.params.get("background")
         inpaint = bool(self.params.get("inpaint_hands", False))
@@ -52,6 +57,64 @@ class AugmentStage(Stage):
                                inpaint_hands=inpaint, num_frames=len(frames))
         log.info("augment: wrote %d frames (bg=%s, inpaint=%s)",
                  len(frames), bool(bg_path), inpaint)
+
+    def _run_original(self, ctx: ClipContext) -> None:
+        """Run/import the paper augmentation stack: Masquerade robotization."""
+        cfg = self.params.get("original", {}) or {}
+        external_dir = ctx.clip_dir / "paper_original" / "augment"
+        external_dir.mkdir(parents=True, exist_ok=True)
+        values = {
+            "video_path": ctx.video_path,
+            "frames_dir": ctx.frames_dir,
+            "clip_dir": ctx.clip_dir,
+            "external_dir": external_dir,
+            "hands_dir": ctx.hands_dir,
+            "trajectory_tum": ctx.clip_dir / "trajectory.tum",
+            "fps": ctx.fps,
+        }
+        run_external(
+            cfg.get("command"),
+            values,
+            cwd=cfg.get("cwd"),
+            shell=bool(cfg.get("shell", False)),
+        )
+
+        out_dir = ctx.clip_dir / "augment"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        frames_glob = cfg.get("frames_glob")
+        video_path = cfg.get("video_path", "video_overlay.mp4")
+        imported = 0
+        if frames_glob:
+            files = sorted(external_dir.glob(frames_glob))
+            if not files:
+                raise ExternalPipelineError(
+                    f"Masquerade adapter expected augmented frames matching "
+                    f"{external_dir / frames_glob}"
+                )
+            for t, path in enumerate(files):
+                img = cv2.imread(str(path))
+                if img is None:
+                    raise ExternalPipelineError(f"cannot read augmented frame: {path}")
+                cv2.imwrite(str(out_dir / f"aug_{t:06d}.png"), img)
+                imported += 1
+        else:
+            src_video = external_dir / video_path
+            if not src_video.exists():
+                raise ExternalPipelineError(
+                    f"Masquerade adapter expected overlay video at {src_video}; "
+                    "set original.frames_glob to import frame images instead"
+                )
+            shutil.copy2(src_video, out_dir / src_video.name)
+            imported = 1
+
+        ctx.manifest.set_stage(
+            self.name,
+            "ok",
+            backend="original",
+            method="Masquerade",
+            imported_artifacts=imported,
+        )
+        log.info("augment(original): imported %d Masquerade artifacts", imported)
 
     def _load_bg(self, path, shape) -> np.ndarray:
         bg = cv2.imread(str(path))

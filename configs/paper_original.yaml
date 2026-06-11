@@ -1,0 +1,87 @@
+# Template for paper-faithful AoE backends.
+#
+# These commands are intentionally placeholders. The paper methods live in
+# separate official CUDA/conda projects and require their own setup:
+#   - LingBot-Depth / MegaSAM for depth + trajectory
+#   - HaWoR + MANO files for hand reconstruction
+#   - Masquerade / Phantom for robotization augmentation
+#
+# Replace each command with your local wrapper script. The wrapper should write
+# the expected files under {external_dir}; this repo then imports them into the
+# standard output layout.
+
+pipeline: [ingest, segment, trajectory, hands, qc, augment]
+
+stages:
+  ingest:
+    enabled: true
+    params:
+      stride: 1
+      max_frames: 0
+      hfov_deg: 70.0
+
+  segment:
+    enabled: true
+    params:
+      backend: vlm
+      vlm:
+        provider: local_openai
+        model: gpt-5.2-2025-12-11
+        base_url: http://litellm.tiktok-row.net
+        keyframe_strategy: adaptive
+        min_keyframes: 8
+        max_keyframes: 32
+        seconds_per_keyframe: 2.0
+
+  trajectory:
+    enabled: true
+    params:
+      backend: original
+      original:
+        # Available placeholders:
+        # {video_path} {frames_dir} {clip_dir} {external_dir}
+        # {intrinsics_json} {fps}
+        command: "python /path/to/run_lingbot_megasam.py --frames {frames_dir} --intrinsics {intrinsics_json} --out {external_dir}"
+        # Expected after command:
+        #   {external_dir}/depth/depth_000000.npy ...
+        #   {external_dir}/trajectory.tum
+        depth_glob: "depth/depth_*.npy"
+        pose_path: "trajectory.tum"
+
+  hands:
+    enabled: true
+    params:
+      backend: original
+      original:
+        # Available placeholders:
+        # {video_path} {frames_dir} {clip_dir} {external_dir}
+        # {intrinsics_json} {trajectory_tum} {fps}
+        command: "python /path/to/run_hawor_mano.py --video {video_path} --trajectory {trajectory_tum} --out {external_dir}"
+        # Expected after command:
+        #   {external_dir}/joints_world.npy  shape (T,2,21,3)
+        #   {external_dir}/joints_2d.npy     shape (T,2,21,2)
+        # Optional:
+        #   {external_dir}/joints_cam.npy    shape (T,2,21,3)
+        joints_world: "joints_world.npy"
+        joints_2d: "joints_2d.npy"
+        joints_cam: "joints_cam.npy"
+
+  qc:
+    enabled: true
+    params:
+      velocity_sigma: 3.0
+      reproj_px: 5.0
+
+  augment:
+    enabled: false
+    params:
+      backend: original
+      original:
+        # Available placeholders:
+        # {video_path} {frames_dir} {clip_dir} {external_dir}
+        # {hands_dir} {trajectory_tum} {fps}
+        command: "python /path/to/run_masquerade.py --video {video_path} --hands {hands_dir} --out {external_dir}"
+        # Import either frames_glob or a video file. If frames_glob is omitted,
+        # video_path is copied into output/<clip>/augment/.
+        # frames_glob: "frames/*.png"
+        video_path: "video_overlay.mp4"

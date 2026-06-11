@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 
 import cv2
 import numpy as np
 
+from ..external import ExternalPipelineError, run_external
 from .base import ClipContext, Stage
 from .registry import register
 
@@ -32,6 +34,10 @@ SLOTS = ("Left", "Right")
 @register("hands")
 class HandStage(Stage):
     def run(self, ctx: ClipContext) -> None:
+        if self.params.get("backend", "substitute") == "original":
+            self._run_original(ctx)
+            return
+
         import mediapipe as mp
         from mediapipe.tasks import python as mp_python
         from mediapipe.tasks.python import vision
@@ -134,6 +140,71 @@ class HandStage(Stage):
 
             draw_hand_overlay(ctx, joints_2d)
 
+    def _run_original(self, ctx: ClipContext) -> None:
+        """Run/import the paper stack: HaWoR + MANO world-space hands."""
+        cfg = self.params.get("original", {}) or {}
+        external_dir = ctx.clip_dir / "paper_original" / "hands"
+        external_dir.mkdir(parents=True, exist_ok=True)
+        intrinsics_json = external_dir / "intrinsics.json"
+        intrinsics_json.write_text(json.dumps(ctx.manifest.intrinsics.to_dict(), indent=2))
+
+        values = {
+            "video_path": ctx.video_path,
+            "frames_dir": ctx.frames_dir,
+            "clip_dir": ctx.clip_dir,
+            "external_dir": external_dir,
+            "intrinsics_json": intrinsics_json,
+            "trajectory_tum": ctx.clip_dir / "trajectory.tum",
+            "fps": ctx.fps,
+        }
+        run_external(
+            cfg.get("command"),
+            values,
+            cwd=cfg.get("cwd"),
+            shell=bool(cfg.get("shell", False)),
+        )
+
+        joints_world = _load_required_array(external_dir / cfg.get("joints_world", "joints_world.npy"))
+        joints_2d = _load_required_array(external_dir / cfg.get("joints_2d", "joints_2d.npy"))
+        cam_path = external_dir / cfg.get("joints_cam", "joints_cam.npy")
+        joints_cam = np.load(cam_path) if cam_path.exists() else np.full_like(joints_world, np.nan)
+
+        if joints_world.ndim != 4 or joints_world.shape[2:] != (NUM_JOINTS, 3):
+            raise ExternalPipelineError(
+                "HaWoR adapter expects joints_world with shape (T,2,21,3)"
+            )
+        if joints_2d.ndim != 4 or joints_2d.shape[2:] != (NUM_JOINTS, 2):
+            raise ExternalPipelineError("HaWoR adapter expects joints_2d with shape (T,2,21,2)")
+
+        ctx.hands_dir.mkdir(parents=True, exist_ok=True)
+        np.save(ctx.hands_dir / "joints_world.npy", joints_world)
+        np.save(ctx.hands_dir / "joints_2d.npy", joints_2d)
+        np.save(ctx.hands_dir / "joints_cam.npy", joints_cam)
+        n_det = int(np.isfinite(joints_2d[..., 0]).any(axis=(1, 2)).sum())
+        (ctx.hands_dir / "meta.json").write_text(
+            json.dumps(
+                {
+                    "backend": "original",
+                    "method": "HaWoR+MANO",
+                    "slots": list(SLOTS),
+                    "num_joints": NUM_JOINTS,
+                    "frames_total": int(joints_2d.shape[0]),
+                    "frames_with_hand": n_det,
+                },
+                indent=2,
+            )
+        )
+        ctx.blackboard["joints_world"] = joints_world
+        ctx.blackboard["joints_2d"] = joints_2d
+        ctx.manifest.set_stage(
+            self.name,
+            "ok",
+            backend="original",
+            method="HaWoR+MANO",
+            frames_with_hand=n_det,
+        )
+        log.info("hands(original): imported HaWoR/MANO detections in %d frames", n_det)
+
     @staticmethod
     def _backproject(pts2d, Kinv, depths, t, W, H, anchor="wrist") -> np.ndarray:
         """Back-project joints: X_cam = depth * K^-1 [u, v, 1].
@@ -194,3 +265,9 @@ def _smooth_series(arr: np.ndarray, window: int, poly: int) -> np.ndarray:
             col_i = savgol_filter(col_i, w, poly)
         out[span, c] = col_i
     return out
+
+
+def _load_required_array(path: Path) -> np.ndarray:
+    if not path.exists():
+        raise ExternalPipelineError(f"expected HaWoR output array at {path}")
+    return np.load(path)

@@ -21,14 +21,15 @@ heavy model swapped for a lightweight open-source substitute that runs on a Mac
 | # | Stage | Paper (heavy) | This repo (Mac-runnable) |
 |---|-------|---------------|--------------------------|
 | 1 | Calibration | Camera2 intrinsics | metadata sidecar → OpenCV checkerboard → FOV pinhole |
-| 2 | Action segmentation | Qwen3-VL-235B | optical-flow + hand-presence heuristic; pluggable VLM backend |
+| 2 | Action segmentation | Qwen3-VL-235B-A22B | adaptive keyframe-count selection + local/hosted VLM backend; optical-flow heuristic fallback |
 | 3 | Camera trajectory + depth | MegaSAM + Lingbot-Depth | ORB monocular VO + **Depth-Anything-V2-Small** (MPS) |
 | 4 | Hand reconstruction | HaWoR + MANO | **MediaPipe HandLandmarker** → depth back-projection → world-lift → smoothing |
 | 5 | Augmentation (optional) | Masquerade GAN + video diffusion | Selfie-Segmentation bg-swap + `cv2.inpaint` (off by default) |
 | 6 | Quality control | 3σ velocity + 5px reproj | NumPy velocity/reprojection filters + 5% manual-inspect sample |
 | + | Eval | — | MPJPE / PA-MPJPE / AUC(PCK); ATE / ATE-S / RPE via `evo` |
 
-Execution DAG: `ingest → trajectory → hands → segment → qc` (augment optional).
+Execution DAG: `ingest → segment → trajectory → hands → qc` (augment optional),
+matching the paper cloud labeling order.
 
 ## Setup
 
@@ -82,11 +83,65 @@ viz/                   hand overlays + trajectory plot
 
 `configs/default.yaml` mirrors the built-in defaults. Run a custom config with
 `--config configs/mine.yaml`, or a subset of stages with `--only ingest,hands`.
-Key knobs: `segment.backend` (`heuristic`|`vlm`), `hands.smooth_window`,
-`hands.depth_anchor` (`wrist`|`per_joint`), `trajectory.depth_model`,
-`qc.{velocity_sigma,reproj_px}`. The stage registry (`stages/registry.py`) lets a
-GPU box swap a substitute for the real model by adding a new stage class — the
-orchestrator is untouched.
+Key knobs: `segment.backend` (`heuristic`|`vlm`), `segment.vlm.provider`
+(`local_openai`|`ollama`|`anthropic`), `segment.vlm.keyframe_strategy`
+(`adaptive`|`fixed`), `hands.smooth_window`, `hands.depth_anchor`
+(`wrist`|`per_joint`), `trajectory.depth_model`, `qc.{velocity_sigma,reproj_px}`.
+The stage registry (`stages/registry.py`) lets a GPU box swap a substitute for
+the real model by adding a new stage class — the orchestrator is untouched.
+
+For the paper-faithful local VLM path, run a vision model behind an
+OpenAI-compatible endpoint and set:
+
+```yaml
+stages:
+  segment:
+    params:
+      backend: vlm
+      vlm:
+        provider: local_openai
+        model: Qwen2.5-VL-7B-Instruct
+        base_url: http://localhost:8000/v1
+        keyframe_strategy: adaptive
+        min_keyframes: 8
+        max_keyframes: 32
+        seconds_per_keyframe: 2.0
+```
+
+`provider: ollama` is also supported for local Ollama vision models. VLM runs
+write `segments.json`, paper-style `atomic_actions.json`, and
+`cloud_selection.json` with the selected frame count and indices.
+
+### Paper-Faithful External Backends
+
+`configs/paper_original.yaml` is a wiring template for the original paper
+methods:
+
+- **Depth + trajectory:** LingBot-Depth + MegaSAM.
+- **Hands:** HaWoR + MANO.
+- **Augmentation:** Masquerade / Phantom-style robotization.
+
+These projects require their own CUDA/conda environments, model weights, and in
+the case of MANO, separately licensed model files. This repo therefore treats
+them as external operators: configure a command, write outputs under
+`{external_dir}`, and the AoE pipeline imports the artifacts into its standard
+layout. For example, `trajectory.backend: original` expects:
+
+```text
+{external_dir}/depth/depth_000000.npy ...
+{external_dir}/trajectory.tum
+```
+
+`hands.backend: original` expects HaWoR/MANO arrays:
+
+```text
+{external_dir}/joints_world.npy  # (T,2,21,3)
+{external_dir}/joints_2d.npy     # (T,2,21,2)
+```
+
+`augment.backend: original` imports either augmented frames or a Masquerade
+overlay video. See `configs/paper_original.yaml` for every placeholder and file
+contract.
 
 ## Evaluation
 

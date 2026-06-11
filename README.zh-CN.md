@@ -17,14 +17,14 @@
 | # | 阶段 | 论文（重型） | 本仓库（Mac 可运行） |
 |---|------|--------------|----------------------|
 | 1 | 标定 | Camera2 内参 | 元数据 → OpenCV 棋盘格 → FOV 针孔默认 |
-| 2 | 动作分段 | Qwen3-VL-235B | 光流 + 手在场启发式；可插拔 VLM 后端 |
+| 2 | 动作分段 | Qwen3-VL-235B-A22B | 自适应计数选帧 + 本地/托管 VLM 后端；光流启发式兜底 |
 | 3 | 相机轨迹 + 深度 | MegaSAM + Lingbot-Depth | OpenCV ORB 单目里程计 + Depth-Anything-V2-Small（MPS） |
 | 4 | 手部重建 | HaWoR + MANO | MediaPipe 21 关节 → 深度反投影 → 世界系 → 平滑 |
 | 5 | 数据增强（可选） | Masquerade GAN + 视频扩散 | 人像分割换背景 + `cv2.inpaint`（默认关闭） |
 | 6 | 质检 | 3σ 速度 + 5px 重投影 | NumPy 速度/重投影过滤 + 5% 人工抽检采样 |
 | + | 评测 | — | MPJPE / PA-MPJPE / AUC(PCK)；ATE / ATE-S / RPE（用 `evo`） |
 
-执行 DAG：`ingest → trajectory → hands → segment → qc`（augment 可选）。
+执行 DAG：`ingest → segment → trajectory → hands → qc`（augment 可选），与论文云端标注顺序一致。
 
 ## 安装
 
@@ -59,6 +59,64 @@ aoe-pipeline run --video datasets/hand_clip.mp4 --output-dir output --verbose
 
 每次运行在 `output/<clip_id>/` 写出：帧、深度、`trajectory.tum`、
 `hands/joints_world.npy`、`segments.json`、`qc_report.json`、`manifest.json`、`viz/`。
+
+## 本地 VLM 分段与计数选帧
+
+论文云端管线使用 Qwen3-VL-235B-A22B 做原子动作切分。本仓库的 `segment.backend: vlm`
+现在支持本地 VLM：`local_openai`（vLLM / LM Studio / llama.cpp server 等
+OpenAI-compatible 服务）和 `ollama`。VLM 路径会按视频时长自适应选择输入帧数，并写出：
+
+- `segments.json`：流水线通用分段结果。
+- `atomic_actions.json`：论文 Figure 3 风格的 `start_time/end_time/verb/object/bbox/confidence`。
+- `cloud_selection.json`：本次选择的帧数、帧索引、provider、prompt 版本。
+
+示例配置：
+
+```yaml
+stages:
+  segment:
+    params:
+      backend: vlm
+      vlm:
+        provider: local_openai
+        model: Qwen2.5-VL-7B-Instruct
+        base_url: http://localhost:8000/v1
+        keyframe_strategy: adaptive
+        min_keyframes: 8
+        max_keyframes: 32
+        seconds_per_keyframe: 2.0
+```
+
+也可以把 `provider` 改成 `ollama`，并用 `model` 指定本地视觉模型名。
+
+## 论文原方案外部后端
+
+`configs/paper_original.yaml` 提供了原论文方法的接入模板：
+
+- **深度 + 相机轨迹**：LingBot-Depth + MegaSAM。
+- **手部重建**：HaWoR + MANO。
+- **数据增强**：Masquerade / Phantom 风格机器人化增强。
+
+这些项目通常需要独立 CUDA/conda 环境、模型权重；MANO 还需要单独注册下载的授权模型文件。
+因此本仓库不把它们硬塞进当前轻量 Python 环境，而是把它们作为外部 operator 调用：
+你配置一条命令，官方 repo 把结果写到 `{external_dir}`，本仓库再导入成统一输出格式。
+
+例如 `trajectory.backend: original` 期望外部命令写出：
+
+```text
+{external_dir}/depth/depth_000000.npy ...
+{external_dir}/trajectory.tum
+```
+
+`hands.backend: original` 期望 HaWoR/MANO 输出：
+
+```text
+{external_dir}/joints_world.npy  # (T,2,21,3)
+{external_dir}/joints_2d.npy     # (T,2,21,2)
+```
+
+`augment.backend: original` 可以导入增强帧序列或 Masquerade overlay 视频。完整占位符和文件约定见
+`configs/paper_original.yaml`。
 
 ## 评测
 

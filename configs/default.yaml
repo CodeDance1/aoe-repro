@@ -1,9 +1,10 @@
 # Default AoE pipeline configuration.
 # Stages run in the listed order. A stage with `enabled: false` is recorded as
-# skipped. The execution DAG is: ingest -> trajectory -> hands -> segment -> qc,
-# with augment optional (off by default).
+# skipped. The execution DAG follows the paper cloud pipeline:
+# ingest/calibration -> segment -> trajectory -> hands -> qc, with augment
+# optional (off by default).
 
-pipeline: [ingest, trajectory, hands, segment, qc, augment]
+pipeline: [ingest, segment, trajectory, hands, qc, augment]
 
 stages:
   ingest:
@@ -35,7 +36,16 @@ stages:
       backend: heuristic   # heuristic | vlm
       motion_threshold: 1.5
       min_segment_frames: 8
-      # vlm: { provider: anthropic, model: claude-opus-4-8 }   # when backend=vlm
+      # Paper-faithful local VLM path. Set backend: vlm and provide a local
+      # OpenAI-compatible vision server, for example vLLM/LM Studio/llama.cpp.
+      vlm:
+        provider: local_openai   # local_openai | ollama | anthropic
+        # model: Qwen2.5-VL-7B-Instruct
+        # base_url: http://localhost:8000/v1
+        keyframe_strategy: adaptive
+        min_keyframes: 8
+        max_keyframes: 32
+        seconds_per_keyframe: 2.0
 
   qc:
     enabled: true

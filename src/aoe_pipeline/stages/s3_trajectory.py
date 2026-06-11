@@ -13,10 +13,12 @@ alignment (see eval/metrics.py).
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import cv2
 import numpy as np
 
+from ..external import ExternalPipelineError, run_external
 from ..utils import get_device
 from .base import ClipContext, Stage
 from .registry import register
@@ -30,10 +32,13 @@ class TrajectoryStage(Stage):
         frames = ctx.get_frames()
         K = ctx.manifest.intrinsics.K
 
-        depths = self._estimate_depth(ctx, frames)
+        backend = self.params.get("backend", "substitute")
+        if backend == "original":
+            depths, poses = self._estimate_original(ctx, frames)
+        else:
+            depths = self._estimate_depth(ctx, frames)
+            poses = self._estimate_poses(frames, K, depths)
         ctx.blackboard["depth"] = depths
-
-        poses = self._estimate_poses(frames, K, depths)
         ctx.blackboard["poses"] = poses
 
         self._write_tum(ctx, poses)
@@ -47,10 +52,81 @@ class TrajectoryStage(Stage):
 
         ctx.manifest.set_stage(
             self.name, "ok",
+            backend=backend,
             num_poses=len(poses),
             depth_model=self.params.get("depth_model"),
             device=get_device(),
         )
+
+    # --- paper-faithful external adapter ---------------------------------------
+    def _estimate_original(self, ctx: ClipContext, frames) -> tuple[list[np.ndarray], list[np.ndarray]]:
+        """Run/import the paper stack: LingBot-Depth + MegaSAM.
+
+        AoE cites LingBot-Depth for depth refinement and MegaSAM for trajectory
+        estimation. Their official implementations require separate CUDA/conda
+        environments, so this adapter runs a user-configured command and imports
+        standard artifacts back into this repo.
+        """
+        cfg = self.params.get("original", {}) or {}
+        external_dir = ctx.clip_dir / "paper_original" / "trajectory"
+        external_dir.mkdir(parents=True, exist_ok=True)
+        intrinsics_json = external_dir / "intrinsics.json"
+        intrinsics_json.write_text(
+            __import__("json").dumps(ctx.manifest.intrinsics.to_dict(), indent=2)
+        )
+
+        values = {
+            "video_path": ctx.video_path,
+            "frames_dir": ctx.frames_dir,
+            "clip_dir": ctx.clip_dir,
+            "external_dir": external_dir,
+            "intrinsics_json": intrinsics_json,
+            "fps": ctx.fps,
+        }
+        run_external(
+            cfg.get("command"),
+            values,
+            cwd=cfg.get("cwd"),
+            shell=bool(cfg.get("shell", False)),
+        )
+
+        depths = self._load_external_depths(ctx, cfg, external_dir, len(frames))
+        poses = self._load_external_poses(cfg, external_dir, len(frames))
+        return depths, poses
+
+    def _load_external_depths(
+        self, ctx: ClipContext, cfg: dict, external_dir: Path, expected: int
+    ) -> list[np.ndarray]:
+        glob_pat = cfg.get("depth_glob", "depth/depth_*.npy")
+        files = sorted(external_dir.glob(glob_pat))
+        if not files:
+            raise ExternalPipelineError(
+                f"original trajectory backend expected LingBot/MegaSAM depth maps matching "
+                f"{external_dir / glob_pat}"
+            )
+        if len(files) != expected:
+            raise ExternalPipelineError(
+                f"expected {expected} external depth maps, found {len(files)} from {glob_pat}"
+            )
+        ctx.depth_dir.mkdir(parents=True, exist_ok=True)
+        depths = []
+        for t, path in enumerate(files):
+            arr = np.load(path).astype(np.float32)
+            np.save(ctx.depth_dir / f"depth_{t:06d}.npy", arr)
+            depths.append(arr)
+        return depths
+
+    def _load_external_poses(self, cfg: dict, external_dir: Path, expected: int) -> list[np.ndarray]:
+        pose_path = external_dir / cfg.get("pose_path", "trajectory.tum")
+        if pose_path.suffix == ".npy":
+            poses = [p.astype(float) for p in np.load(pose_path)]
+        else:
+            poses = _read_tum_poses(pose_path)
+        if len(poses) != expected:
+            raise ExternalPipelineError(
+                f"expected {expected} external poses, found {len(poses)} in {pose_path}"
+            )
+        return poses
 
     # --- depth -----------------------------------------------------------------
     def _estimate_depth(self, ctx: ClipContext, frames) -> list[np.ndarray]:
@@ -149,3 +225,24 @@ class TrajectoryStage(Stage):
                 f"{ts:.6f} {tx:.6f} {ty:.6f} {tz:.6f} {qx:.6f} {qy:.6f} {qz:.6f} {qw:.6f}"
             )
         (ctx.clip_dir / "trajectory.tum").write_text("\n".join(lines) + "\n")
+
+
+def _read_tum_poses(path: Path) -> list[np.ndarray]:
+    from scipy.spatial.transform import Rotation
+
+    if not path.exists():
+        raise ExternalPipelineError(f"expected external trajectory file at {path}")
+    poses = []
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = [float(x) for x in line.split()]
+        if len(parts) != 8:
+            raise ExternalPipelineError(f"invalid TUM pose line in {path}: {line}")
+        _, tx, ty, tz, qx, qy, qz, qw = parts
+        P = np.eye(4)
+        P[:3, :3] = Rotation.from_quat([qx, qy, qz, qw]).as_matrix()
+        P[:3, 3] = [tx, ty, tz]
+        poses.append(P)
+    return poses
