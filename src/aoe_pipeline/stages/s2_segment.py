@@ -33,13 +33,16 @@ class SegmentStage(Stage):
         (ctx.clip_dir / "segments.json").write_text(json.dumps(segments, indent=2))
         ctx.blackboard["segments"] = segments
         n_inter = sum(1 for s in segments if s["label"].startswith("interaction"))
-        ctx.manifest.set_stage(self.name, "ok", backend=backend,
-                               num_segments=len(segments), num_interaction=n_inter)
-        log.info("segment: %d segments (%d interaction) via %s", len(segments), n_inter, backend)
+        thr = getattr(self, "_resolved_threshold", None)
+        ctx.manifest.set_stage(self.name, "ok", backend=backend, num_segments=len(segments),
+                               num_interaction=n_inter,
+                               motion_threshold=(round(thr, 4) if thr is not None else None))
+        log.info("segment: %d segments (%d interaction) via %s (thr=%s)",
+                 len(segments), n_inter, backend,
+                 f"{thr:.3f}" if thr is not None else "n/a")
 
     # --- heuristic backend -----------------------------------------------------
     def _segment_heuristic(self, ctx: ClipContext, frames) -> list[dict]:
-        thr = float(self.params.get("motion_threshold", 1.5))
         min_len = int(self.params.get("min_segment_frames", 8))
         T = len(frames)
         if T == 0:
@@ -47,6 +50,8 @@ class SegmentStage(Stage):
 
         motion = _motion_energy(frames)
         present = _hand_presence(ctx, T)
+        thr = _resolve_threshold(motion, present, self.params)
+        self._resolved_threshold = thr
         active = (motion > thr) & present
 
         # contiguous run labels, then enforce minimum length by merging.
@@ -80,6 +85,22 @@ class SegmentStage(Stage):
 
 
 # --- helpers -------------------------------------------------------------------
+def _resolve_threshold(motion: np.ndarray, present: np.ndarray, params: dict) -> float:
+    """Resolve the motion threshold.
+
+    ``motion_threshold: auto`` (or None) → a percentile of this clip's own motion
+    energy over hand-present frames, so any clip segments sensibly by default; a
+    numeric value is used as-is.
+    """
+    thr = params.get("motion_threshold", "auto")
+    if thr not in (None, "auto"):
+        return float(thr)
+    pct = float(params.get("motion_percentile", 65))
+    vals = motion[present] if (present is not None and np.any(present)) else motion
+    vals = vals[vals > 0]
+    return float(np.percentile(vals, pct)) if vals.size else 0.0
+
+
 def _motion_energy(frames) -> np.ndarray:
     """Mean Farneback optical-flow magnitude per frame (motion[0] = 0)."""
     grays = [cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) for f in frames]

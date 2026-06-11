@@ -32,8 +32,9 @@ stages:
   segment:
     enabled: true
     params:
-      backend: heuristic   # heuristic | vlm
-      motion_threshold: 1.5
+      backend: heuristic     # heuristic | vlm
+      motion_threshold: auto # 'auto' = percentile of THIS clip's motion energy; or a fixed number
+      motion_percentile: 65  # used when motion_threshold is 'auto'
       min_segment_frames: 8
       # vlm: { provider: anthropic, model: claude-opus-4-8 }   # when backend=vlm
 
