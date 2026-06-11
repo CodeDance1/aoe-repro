@@ -129,6 +129,25 @@ wrist-anchored reconstruction), `viz/hand_views_world.mp4` (Front/Top/Side
 orthographic, hands + camera trail), and `viz/hand_views_scene.mp4` (the
 perspective HaWoR-style world scene).
 
+## Semantic action labels
+
+The `label` stage gives each interaction segment a real action label
+(`label_zh`/`label_en`/`hand`/`object`) so the contact-sheet / annotated banners
+show e.g. "pick up cup" instead of `interaction_3`. It prefers, in order: a
+`<clip_dir>/semantic_labels.json` (offline/cached), else a VLM provider (needs the
+`[vlm]` extra + an API key), else it skips (generic labels).
+
+To produce the labels yourself (portable, CI-friendly — codifies a "label +
+adversarial-verify voting" pass per segment):
+
+```bash
+# samples 3 keyframes per segment, labels via VLM, runs 2 verify votes -> semantic_labels.json
+python scripts/label_segments_vlm.py --clip-dir output/<clip> --provider openai --verify 2
+python scripts/label_segments_vlm.py --clip-dir output/<clip> --dry-run   # no API (CI smoke)
+```
+
+The next `aoe-pipeline run` (or `--only label`) then merges that file.
+
 ## Tests
 
 ```bash

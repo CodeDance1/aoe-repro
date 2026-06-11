@@ -3,7 +3,7 @@
 # skipped. The execution DAG is: ingest -> trajectory -> hands -> segment -> qc,
 # with augment optional (off by default).
 
-pipeline: [ingest, trajectory, hands, segment, qc, augment]
+pipeline: [ingest, trajectory, hands, segment, label, qc, augment]
 
 stages:
   ingest:
@@ -37,6 +37,16 @@ stages:
       motion_percentile: 65  # used when motion_threshold is 'auto'
       min_segment_frames: 8
       # vlm: { provider: anthropic, model: claude-opus-4-8 }   # when backend=vlm
+
+  label:
+    enabled: true
+    params:
+      # Merge <clip_dir>/semantic_labels.json if present; else query a VLM provider
+      # (needs the [vlm] extra + an API key); else skip (generic interaction_k labels).
+      provider: openai     # openai | anthropic
+      num_keyframes: 3
+      verify: 2            # adversarial verify votes per segment (0 = label only)
+      # labels_file: semantic_labels.json   # override the offline labels filename
 
   qc:
     enabled: true
