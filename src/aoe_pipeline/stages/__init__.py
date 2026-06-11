@@ -8,6 +8,7 @@ from . import (  # noqa: F401  (imported for registration side effects)
     s2b_label,
     s3_trajectory,
     s4_hands,
+    s4_hands_hawor,
     s5_augment,
     s6_qc,
 )
