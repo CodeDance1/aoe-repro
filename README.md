@@ -58,6 +58,7 @@ aoe-pipeline run --video data/sample_clip.mp4 --output-dir output --verbose
 curl -sL -o datasets/hand.jpg \
   https://storage.googleapis.com/mediapipe-tasks/hand_landmarker/woman_hands.jpg
 python scripts/make_hand_clip.py --image datasets/hand.jpg --out datasets/hand_clip.mp4
+# segment viz (timeline / contact-sheet / annotated GIF + cut clips) is rendered by default
 aoe-pipeline run --video datasets/hand_clip.mp4 --output-dir output --verbose
 
 aoe-pipeline list-stages
@@ -82,9 +83,11 @@ viz/                   hand overlays + trajectory plot
 
 `configs/default.yaml` mirrors the built-in defaults. Run a custom config with
 `--config configs/mine.yaml`, or a subset of stages with `--only ingest,hands`.
-Key knobs: `segment.backend` (`heuristic`|`vlm`), `hands.smooth_window`,
-`hands.depth_anchor` (`wrist`|`per_joint`), `trajectory.depth_model`,
-`qc.{velocity_sigma,reproj_px}`. The stage registry (`stages/registry.py`) lets a
+Key knobs: `segment.backend` (`heuristic`|`vlm`),
+`segment.motion_threshold` (`auto` = adaptive per-clip ~p65 of motion energy, or a
+fixed number), `hands.smooth_window`, `hands.depth_anchor` (`wrist`|`per_joint`),
+`trajectory.depth_model`, `qc.{velocity_sigma,reproj_px}`. The stage registry
+(`stages/registry.py`) lets a
 GPU box swap a substitute for the real model by adding a new stage class — the
 orchestrator is untouched.
 
@@ -105,8 +108,11 @@ For ground truth, **EgoDex** (Apple) is the lowest-friction benchmark — it shi
 ## Visualization
 
 ```bash
-# segment timeline / contact sheet / annotated video + cut interaction clips
-python scripts/visualize_segments.py --clip-dir output/<clip> --source <video>.mp4
+# segment timeline / contact sheet / annotated video (+ GIF) + cut interaction clips
+python scripts/visualize_segments.py --clip-dir output/<clip> --source <video>.mp4 --gif
+
+# the main run renders these by default right after the pipeline (--no-viz-segments to skip)
+aoe-pipeline run --video <video>.mp4 --output-dir output
 
 # HaWoR-style Front|Top|Side orthographic animation of the 3D hands
 python scripts/render_hand_views.py --clip-dir output/<clip> --frame both

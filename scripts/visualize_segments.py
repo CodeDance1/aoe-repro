@@ -83,25 +83,39 @@ def timeline(segs, man, out: Path, W: int = 1100, H: int = 130) -> Path:
 
 def contact_sheet(clip_dir: Path, segs, out: Path, cols: int = 5,
                   cell: tuple[int, int] = (320, 180)) -> tuple[Path, int]:
-    inter = [s for s in segs if s["label"].startswith("interaction")]
+    """One mid-frame per interaction segment; if there are none, fall back to
+    frames sampled uniformly across the clip (so the sheet is never blank).
+
+    Returns (path, n_cells).
+    """
     cmap = seg_color_map(segs)
+    inter = [s for s in segs if s["label"].startswith("interaction")]
+    if inter:
+        cells = [((s["start_frame"] + s["end_frame"]) // 2,
+                  f"{display_label(s)}  {s['start_time']:.1f}-{s['end_time']:.1f}s",
+                  cmap[s["label"]]) for s in inter]
+    else:
+        total = max((s["end_frame"] for s in segs), default=1)
+        n = min(10, max(1, total))
+        idxs = np.linspace(0, max(total - 1, 0), n).round().astype(int)
+        cells = [(int(fi), f"{label_for_frame(segs, int(fi))}  f{int(fi)}",
+                  cmap.get(label_for_frame(segs, int(fi)), IDLE_COLOR)) for fi in idxs]
+
     cw, ch = cell
     pad, banner = 8, 24
-    rows = max(1, (len(inter) + cols - 1) // cols)
+    rows = max(1, (len(cells) + cols - 1) // cols)
     sheet = np.full((rows * (ch + banner + pad) + pad, cols * (cw + pad) + pad, 3), 255, np.uint8)
     hands_dir = clip_dir / "viz" / "hands"
-    for idx, s in enumerate(inter):
-        mid = (s["start_frame"] + s["end_frame"]) // 2
-        img = cv2.imread(str(hands_dir / f"hands_{mid:06d}.png"))
+    for idx, (frame_idx, text, color) in enumerate(cells):
+        img = cv2.imread(str(hands_dir / f"hands_{frame_idx:06d}.png"))
         img = cv2.resize(img, (cw, ch)) if img is not None else np.zeros((ch, cw, 3), np.uint8)
         r, c = divmod(idx, cols)
         y, x = pad + r * (ch + banner + pad), pad + c * (cw + pad)
-        cv2.rectangle(sheet, (x, y), (x + cw, y + banner), cmap[s["label"]], -1)
-        cv2.putText(sheet, f"{display_label(s)}  {s['start_time']:.1f}-{s['end_time']:.1f}s",
-                    (x + 4, y + 17), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 0), 1)
+        cv2.rectangle(sheet, (x, y), (x + cw, y + banner), color, -1)
+        cv2.putText(sheet, text, (x + 4, y + 17), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 0), 1)
         sheet[y + banner : y + banner + ch, x : x + cw] = img
     cv2.imwrite(str(out), sheet)
-    return out, len(inter)
+    return out, len(cells)
 
 
 def annotated_video(clip_dir: Path, segs, man, out: Path) -> Path:
@@ -151,11 +165,25 @@ def cut_clips(src: Path, segs, out_dir: Path) -> list[Path]:
     return made
 
 
+def to_gif(mp4: Path, speed: float = 0.5, fps: int = 10, width: int = 640) -> Path | None:
+    """Convert an annotated mp4 to a GIF via the ffmpeg palette two-step."""
+    ff = shutil.which("ffmpeg")
+    if not ff:
+        print("ffmpeg not found; skipping GIF")
+        return None
+    gif = mp4.with_suffix(".gif")
+    vf = (f"setpts={speed}*PTS,fps={fps},scale={width}:-1:flags=lanczos,"
+          f"split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer")
+    subprocess.run([ff, "-y", "-i", str(mp4), "-vf", vf, str(gif)], check=True, capture_output=True)
+    return gif
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--clip-dir", required=True)
     ap.add_argument("--source", help="source video, to cut interaction sub-clips")
     ap.add_argument("--no-video", action="store_true", help="skip the annotated mp4")
+    ap.add_argument("--gif", action="store_true", help="also convert the annotated mp4 to a GIF")
     args = ap.parse_args()
 
     clip_dir = Path(args.clip_dir)
@@ -167,10 +195,12 @@ def main() -> int:
     t = timeline(segs, man, viz / "segments_timeline.png")
     cs, n = contact_sheet(clip_dir, segs, viz / "segments_contactsheet.png")
     print(f"timeline      -> {t}")
-    print(f"contact sheet -> {cs}  ({n} interaction segments)")
+    print(f"contact sheet -> {cs}  ({n} cells)")
     if not args.no_video:
         av = annotated_video(clip_dir, segs, man, viz / "segments_annotated.mp4")
         print(f"annotated mp4 -> {av}")
+        if args.gif and (g := to_gif(av)):
+            print(f"annotated gif -> {g}")
     if args.source:
         clips = cut_clips(Path(args.source), segs, clip_dir / "segments_clips")
         print(f"cut {len(clips)} interaction clips -> {clip_dir / 'segments_clips'}")

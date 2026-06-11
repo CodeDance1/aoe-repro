@@ -52,7 +52,8 @@ class PipelineConfig(BaseModel):
                 "segment": StageCfg(
                     params={
                         "backend": "heuristic",
-                        "motion_threshold": 1.5,
+                        "motion_threshold": "auto",
+                        "motion_percentile": 65,
                         "min_segment_frames": 8,
                     }
                 ),

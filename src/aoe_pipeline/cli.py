@@ -20,6 +20,24 @@ def _load_config(config: Path | None) -> PipelineConfig:
     return PipelineConfig.from_yaml(config) if config else PipelineConfig.default()
 
 
+def _run_segment_viz(clip_dir: Path, video: Path) -> None:
+    """Invoke scripts/visualize_segments.py on a processed clip and make a GIF."""
+    import subprocess
+    import sys
+
+    script = Path(__file__).resolve().parents[2] / "scripts" / "visualize_segments.py"
+    if not script.exists():
+        console.print(f"[yellow]![/yellow] segment-viz script not found at {script}; skipping")
+        return
+    cmd = [sys.executable, str(script), "--clip-dir", str(clip_dir), "--source", str(video), "--gif"]
+    console.print(f"[cyan]→[/cyan] segment visualization: {' '.join(cmd)}")
+    try:
+        subprocess.run(cmd, check=True)
+        console.print(f"[green]✓[/green] segment visualization → {clip_dir / 'viz'}")
+    except subprocess.CalledProcessError as exc:
+        console.print(f"[red]✗[/red] segment visualization failed (exit {exc.returncode})")
+
+
 @app.command()
 def run(
     video: Path = typer.Option(..., exists=True, dir_okay=False, help="Input egocentric video"),
@@ -27,6 +45,11 @@ def run(
     config: Path = typer.Option(None, exists=True, help="YAML config (default: built-in)"),
     clip_id: str = typer.Option(None, help="Clip id (default: video filename stem)"),
     only: str = typer.Option(None, help="Comma-separated subset of stages to run"),
+    viz_segments: bool = typer.Option(
+        True, "--viz-segments/--no-viz-segments",
+        help="Render segment visualizations (timeline/contact-sheet/annotated video + GIF)"
+             " and cut interaction sub-clips after the run. On by default; --no-viz-segments to skip",
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Run the labeling pipeline on an egocentric video."""
@@ -38,6 +61,8 @@ def run(
     for name, st in ctx.manifest.stages.items():
         color = {"ok": "green", "skipped": "yellow", "error": "red"}.get(st.status, "white")
         console.print(f"  [{color}]{st.status:8}[/{color}] {name}")
+    if viz_segments:
+        _run_segment_viz(ctx.clip_dir, video)
 
 
 @app.command("list-stages")
