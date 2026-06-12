@@ -9,6 +9,12 @@ __pycache__/
 # Project outputs / large assets
 output/
 datasets/
+external/*
+!external/
+!external/hawor.zip
+!external/pytorch3d.zip
+docker/source-cache/*
+!docker/source-cache/.gitkeep
 *.ckpt
 *.pth
 

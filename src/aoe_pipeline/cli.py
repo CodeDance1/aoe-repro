@@ -115,6 +115,77 @@ def viz(clip_dir: Path = typer.Option(..., exists=True, help="output/<clip_id> d
     console.print(f"[green]✓[/green] overlays → {out}")
 
 
+@app.command("render-hawor-demo")
+def render_hawor_demo_cmd(
+    clip_dir: Path = typer.Option(..., exists=True, help="output/<clip_id> directory"),
+    out: Path = typer.Option(None, help="Output MP4 path"),
+    fps: float = typer.Option(30.0, help="Output frames per second"),
+    size: int = typer.Option(720, help="Square output size in pixels"),
+    prefer_mesh: str = typer.Option("true", help="Use MANO mesh files when available: true|false"),
+) -> None:
+    """Render a HaWoR-style 2x2 demo video from saved AoE outputs."""
+    from .hawor_render import render_hawor_demo
+
+    out_mp4 = out or clip_dir / "viz" / "hawor_demo.mp4"
+    rendered = render_hawor_demo(
+        clip_dir=clip_dir,
+        out_mp4=out_mp4,
+        fps=fps,
+        size=size,
+        prefer_mesh=_parse_bool_option(prefer_mesh, "prefer-mesh"),
+    )
+    console.print(f"[green]✓[/green] HaWoR demo → {rendered}")
+
+
+@app.command("check-hawor-demo")
+def check_hawor_demo_cmd(
+    clip_dir: Path = typer.Option(..., exists=True, help="output/<clip_id> directory"),
+    demo_mp4: Path = typer.Option(None, help="Rendered HaWoR-style MP4 path"),
+    require_mesh: str = typer.Option("true", help="Require MANO mesh files: true|false"),
+    expected_size: int = typer.Option(720, help="Expected square MP4 size in pixels"),
+) -> None:
+    """Validate HaWoR hybrid arrays, MANO meshes, and rendered demo MP4."""
+    from .hawor_check import check_hawor_outputs
+
+    require_mesh_bool = _parse_bool_option(require_mesh, "require-mesh")
+    try:
+        report = check_hawor_outputs(
+            clip_dir=clip_dir,
+            demo_mp4=demo_mp4,
+            require_mesh=require_mesh_bool,
+            expected_size=expected_size,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    console.print("[green]✓[/green] HaWoR outputs validated")
+    console.print(f"  frames_total          : {report['frames_total']}")
+    console.print(f"  frames_with_world_hand: {report['frames_with_world_hand']}")
+    console.print(f"  reprojection_median_px: {report['median_joint_reprojection_px']:.3f}")
+    if require_mesh_bool:
+        console.print(f"  frames_with_mesh      : {report['frames_with_mesh']}")
+        console.print(f"  mesh_vertices         : {report['mesh_vertices']}")
+        console.print(f"  mesh_faces            : {report['mesh_faces']}")
+        console.print(f"  visible_mesh_vertices : {report['visible_projected_mesh_vertices']}")
+    if "demo_video" in report:
+        video = report["demo_video"]
+        console.print(
+            f"  demo_video            : {video['width']}x{video['height']}, "
+            f"{video['frames']} frames"
+        )
+
+
+def _parse_bool_option(value: str | bool, name: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    raise typer.BadParameter(f"--{name} must be true or false")
+
+
 def main() -> None:
     app()
 

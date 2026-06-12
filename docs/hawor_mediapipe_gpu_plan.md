@@ -35,7 +35,7 @@ Expected behavior:
   - 2D landmarks
   - handedness / slot assignment
   - frame presence mask
-- Run HaWoR in its own GPU environment.
+- Run HaWoR in the shared uv-managed GPU environment.
 - Import HaWoR/MANO results when available.
 - Fill failed HaWoR frames with MediaPipe fallback results when configured.
 - Record fallback counts and backend metadata in `manifest.json` and
@@ -53,13 +53,13 @@ HaWoR is invoked.
 
 ### AoE Repo Environment
 
-Use the existing repo environment first:
+Use one uv-managed Python 3.11 environment for AoE and HaWoR dependencies:
 
 ```bash
 cd /path/to/aoe-repro
-uv venv --python 3.12
+uv venv --python 3.11
 source .venv/bin/activate
-uv pip install -e '.[dev]'
+uv pip install -e '.[dev,render]'
 ```
 
 Run the current tests:
@@ -68,10 +68,10 @@ Run the current tests:
 pytest -q
 ```
 
-### HaWoR Environment
+### HaWoR Source And Runtime
 
-Install HaWoR separately, outside this repo, following the official project
-instructions:
+Keep HaWoR source outside git-tracked files, or inside the Docker image under
+`/opt/aoe-repo/external/HaWoR`. The repository ignores `external/`.
 
 - HaWoR code: https://github.com/ThunderVVV/HaWoR
 - HaWoR project page: https://hawor-project.github.io/
@@ -79,8 +79,11 @@ instructions:
 
 Notes:
 
-- Keep HaWoR in a separate conda/venv environment because it may require a
-  specific CUDA, PyTorch, and compiled dependency stack.
+- Use `scripts/install_hawor_uv_env.sh` on the host, or
+  `docker/hawor-gpu.Dockerfile` in a container, to install HaWoR dependencies
+  into the same uv environment as AoE.
+- The Docker image uses `/opt/aoe-repo/.venv` with Python 3.11 and
+  `/opt/aoe-repo/external/HaWoR`.
 - MANO files are license-gated. Download them manually and place them where
   HaWoR expects them.
 - Do not commit MANO files, model checkpoints, videos, or generated outputs.
@@ -88,9 +91,8 @@ Notes:
 Smoke test HaWoR independently before connecting it to AoE:
 
 ```bash
-conda activate hawor
 cd /path/to/HaWoR
-# Run the official demo/inference command from HaWoR's README.
+../aoe-repro/.venv/bin/python demo.py --video_path <small_video> --img_focal <fx>
 ```
 
 Only continue once HaWoR can process a small video or frame sequence by itself.
@@ -242,12 +244,8 @@ stages:
         fallback_to_mediapipe: true
         original:
           command:
-            - conda
-            - run
-            - -n
-            - hawor
-            - python
-            - /path/to/wrappers/run_hawor_with_mediapipe_hints.py
+            - /path/to/aoe-repro/.venv/bin/python
+            - /path/to/aoe-repro/scripts/run_hawor_with_mediapipe_hints.py
             - --video
             - "{video_path}"
             - --frames
@@ -311,7 +309,8 @@ output_baseline/<clip>/qc_report.json
 Run the wrapper manually outside AoE and inspect outputs:
 
 ```bash
-conda run -n hawor python /path/to/wrappers/run_hawor_with_mediapipe_hints.py \
+/path/to/aoe-repro/.venv/bin/python \
+  /path/to/aoe-repro/scripts/run_hawor_with_mediapipe_hints.py \
   --video data/sample_clip.mp4 \
   --frames output_baseline/sample_clip/frames \
   --trajectory output_baseline/sample_clip/trajectory.tum \
@@ -417,8 +416,9 @@ hand reconstruction stage:
 aoe-pipeline render-hawor-demo \
   --clip-dir output_hybrid/<clip> \
   --out output_hybrid/<clip>/viz/hawor_demo.mp4 \
-  --layout 2x2 \
-  --fps 30
+  --fps 30 \
+  --size 720 \
+  --prefer-mesh true
 ```
 
 Why a separate command:
@@ -637,7 +637,15 @@ After HaWoR wrapper exports MANO meshes:
 aoe-pipeline render-hawor-demo \
   --clip-dir output_hybrid/<clip> \
   --out output_hybrid/<clip>/viz/hawor_demo.mp4 \
+  --fps 30 \
+  --size 720 \
   --prefer-mesh true
+
+aoe-pipeline check-hawor-demo \
+  --clip-dir output_hybrid/<clip> \
+  --demo-mp4 output_hybrid/<clip>/viz/hawor_demo.mp4 \
+  --require-mesh true \
+  --expected-size 720
 ```
 
 Acceptance criteria:
@@ -708,7 +716,7 @@ PY
 | Many NaNs in HaWoR output | bad crop boxes or detector misses | use MediaPipe bbox expansion and fallback |
 | World hands drift far away | trajectory coordinate convention mismatch | verify `trajectory.tum` is camera-to-world and units are consistent |
 | MANO files missing | MANO license files not installed | download from MANO site and configure HaWoR path |
-| CUDA/PyTorch errors | HaWoR environment mismatch | run HaWoR in isolated conda env through `conda run` |
+| CUDA/PyTorch errors | HaWoR environment mismatch | rebuild the shared uv env or Docker image with the pinned CUDA/PyTorch stack |
 
 ## Alternative Plans
 
@@ -765,11 +773,18 @@ The GPU migration is complete when:
    - `hands/joints_world.npy`
    - `hands/joints_cam.npy`
    - `hands/joints_2d.npy`
+   - `hands/verts_cam.npy`
+   - `hands/verts_world.npy`
+   - `hands/faces.npy`
    - `hands/meta.json`
 4. `hands/meta.json` reports `backend: hybrid`.
 5. QC runs on the imported hybrid outputs.
-6. Visualization overlays are coherent.
-7. Tests pass:
+6. `aoe-pipeline render-hawor-demo --prefer-mesh true` writes a 720x720 MP4.
+7. `aoe-pipeline check-hawor-demo --require-mesh true` passes on the rendered
+   clip.
+8. Visualization overlays are coherent and the rendered four-panel video uses
+   MANO surfaces, not the joint-hull fallback.
+9. Tests pass:
 
 ```bash
 pytest -q

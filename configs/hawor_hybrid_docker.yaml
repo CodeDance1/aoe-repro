@@ -1,0 +1,64 @@
+# GPU-oriented HaWoR + MediaPipe hybrid config for docker/hawor-gpu.Dockerfile.
+
+pipeline: [ingest, segment, trajectory, hands, qc]
+
+stages:
+  ingest:
+    enabled: true
+    params:
+      stride: 1
+      max_frames: 0
+      hfov_deg: 70.0
+
+  segment:
+    enabled: true
+    params:
+      backend: heuristic
+
+  trajectory:
+    enabled: true
+    params:
+      backend: substitute
+
+  hands:
+    enabled: true
+    params:
+      backend: hybrid
+      max_hands: 2
+      smooth_window: 5
+      smooth_poly: 3
+      depth_anchor: wrist
+      hybrid:
+        use_mediapipe_bbox: true
+        use_mediapipe_landmarks: true
+        fallback_to_mediapipe: true
+        original:
+          command:
+            - /opt/aoe-repo/.venv/bin/python
+            - /opt/aoe-repo/scripts/run_hawor_with_mediapipe_hints.py
+            - --video
+            - "{video_path}"
+            - --frames
+            - "{frames_dir}"
+            - --trajectory
+            - "{trajectory_tum}"
+            - --intrinsics
+            - "{intrinsics_json}"
+            - --mediapipe-hints
+            - "{mediapipe_hints}"
+            - --out
+            - "{external_dir}"
+            - --hawor-root
+            - /opt/aoe-repo/external/HaWoR
+          joints_world: joints_world.npy
+          joints_2d: joints_2d.npy
+          joints_cam: joints_cam.npy
+          verts_cam: verts_cam.npy
+          verts_world: verts_world.npy
+          faces: faces.npy
+
+  qc:
+    enabled: true
+    params:
+      velocity_sigma: 3.0
+      reproj_px: 5.0

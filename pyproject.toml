@@ -32,6 +32,7 @@ dependencies = [
 vlm = ["anthropic>=0.40"]
 augment = ["diffusers>=0.27", "accelerate>=0.30"]
 download = ["requests>=2.31", "huggingface-hub>=0.24"]
+render = ["imageio[ffmpeg]>=2.34", "trimesh>=4.0", "pyrender>=0.1"]
 dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.5"]
 
 [project.urls]

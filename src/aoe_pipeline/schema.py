@@ -7,7 +7,11 @@ A processed clip lives in ``output/<clip_id>/`` with:
     depth/depth_%06d.npy   # monocular depth (float32, HxW)
     trajectory.tum         # camera poses, TUM format (consumable by `evo`)
     hands/joints_world.npy # (T, H, 21, 3) world-coordinate 3D joints
+    hands/joints_cam.npy   # (T, H, 21, 3) camera-coordinate 3D joints
     hands/joints_2d.npy    # (T, H, 21, 2) image-pixel 2D joints
+    hands/verts_cam.npy    # optional MANO vertices, (T, H, V, 3)
+    hands/verts_world.npy  # optional MANO vertices, (T, H, V, 3)
+    hands/faces.npy        # optional MANO triangle indices, (F, 3)
     segments.json          # atomic-action segments
     qc_report.json         # quality-control flags
     viz/                   # optional overlays / plots
