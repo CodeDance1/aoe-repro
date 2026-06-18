@@ -24,6 +24,7 @@ ARG PYTORCH3D_ZIP=https://github.com/facebookresearch/pytorch3d/archive/refs/hea
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential \
+      openssh-server \
       ca-certificates \
       cmake \
       curl \
